@@ -463,7 +463,15 @@ export function MessageTimeline(props: {
   const virtualItemByKey = createMemo(
     () => new Map(virtualizer.getVirtualItems().map((item) => [item.key, item] as const)),
   )
-  const virtualRowKeys = createMemo(() => virtualizer.getVirtualItems().map((item) => item.key as string))
+  const virtualRowKeys = createMemo(() => {
+    const items = virtualizer.getVirtualItems()
+    if (items.length > 0) return items.map((item) => item.key as string)
+
+    const rows = timelineRows()
+    if (rows.length === 0 || rows.length > 20) return []
+
+    return rows.map(TimelineRow.key)
+  })
   createEffect(() => {
     props.setRevealMessage?.((id) => {
       const index = messageRowIndex().get(id)
@@ -554,6 +562,17 @@ export function MessageTimeline(props: {
     requestAnimationFrame(() => {
       virtualizer.measure()
       maybeAnchorBottom()
+    })
+  }
+
+  const bindVirtualContent = (element: HTMLDivElement) => {
+    virtualContent = element
+    props.setContentRef(element)
+
+    requestAnimationFrame(() => {
+      const root = element.parentElement
+      if (!(root instanceof HTMLDivElement)) return
+      bindListRoot(root)
     })
   }
 
@@ -1160,9 +1179,24 @@ export function MessageTimeline(props: {
 
   function VirtualTimelineRow(props: { rowKey: string }) {
     let element: HTMLDivElement
-    const initialItem = virtualItemByKey().get(props.rowKey)!
+    const fallbackItem = createMemo<VirtualItem>(() => {
+      const index = Math.max(
+        0,
+        timelineRows().findIndex((row) => TimelineRow.key(row) === props.rowKey),
+      )
+      const start = index * timelineFallbackItemSize
+      return {
+        end: start + timelineFallbackItemSize,
+        index,
+        key: props.rowKey,
+        lane: 0,
+        size: timelineFallbackItemSize,
+        start,
+      }
+    })
+    const initialItem = virtualItemByKey().get(props.rowKey) ?? fallbackItem()
     const initialRow = timelineRowByKey().get(props.rowKey)!
-    const item = createMemo(() => virtualItemByKey().get(props.rowKey) ?? initialItem)
+    const item = createMemo(() => virtualItemByKey().get(props.rowKey) ?? fallbackItem())
     const row = createMemo(() => timelineRowByKey().get(props.rowKey) ?? initialRow)
     const asyncFile = () => {
       const value = row()
@@ -1549,10 +1583,7 @@ export function MessageTimeline(props: {
         </Show>
         <div
           data-timeline-virtual-content
-          ref={(element) => {
-            virtualContent = element
-            props.setContentRef(element)
-          }}
+          ref={bindVirtualContent}
           style={{
             height: `${virtualizer.getTotalSize()}px`,
             position: "relative",
